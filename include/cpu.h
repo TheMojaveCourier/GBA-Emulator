@@ -24,8 +24,8 @@ private:
     uint32_t fetchOpcode(uint32_t address);
     bool setFlags;
     bool checkCondition(uint32_t condition);
-    uint32_t readMemory(uint32_t address);
-    void writeMemory(uint32_t address, uint32_t value);
+    uint32_t readMemory(uint32_t address, int size = 4); // size: 1=byte, 2=halfword, 4=word
+    void writeMemory(uint32_t address, uint32_t value, int size = 4);
 };
 
 #endif // CPU_H

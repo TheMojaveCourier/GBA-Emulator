@@ -14,10 +14,7 @@ void CPU::reset() {
 }
 
 uint32_t CPU::fetchOpcode(uint32_t address) {
-    return memory.read(address) | 
-           (memory.read(address + 1) << 8) |
-           (memory.read(address + 2) << 16) |
-           (memory.read(address + 3) << 24);
+    return memory.read32(address);
 }
 
 void CPU::step() {
@@ -203,18 +200,38 @@ bool CPU::checkCondition(uint32_t condition) {
     }
 }
 
-uint32_t CPU::readMemory(uint32_t address) {
-    if (address >= memory.getSize()) {
+uint32_t CPU::readMemory(uint32_t address, int size) {
+    if (!memory.isValidAddress(address)) {
         std::cerr << "Memory read error: Invalid address 0x" << std::hex << address << std::endl;
         return 0; // Handle error
     }
-    return memory.read(address);
+    
+    switch (size) {
+        case 1: return memory.read(address);
+        case 2: return memory.read16(address);
+        case 4: return memory.read32(address);
+        default:
+            std::cerr << "Invalid memory read size: " << size << std::endl;
+            return 0;
+    }
 }
 
-void CPU::writeMemory(uint32_t address, uint32_t value) {
-    if (address >= memory.getSize()) {
+void CPU::writeMemory(uint32_t address, uint32_t value, int size) {
+    if (!memory.isValidAddress(address)) {
         std::cerr << "Memory write error: Invalid address 0x" << std::hex << address << std::endl;
         return; // Handle error
     }
-    memory.write(address, value);
+    if (!memory.isWritableAddress(address)) {
+        std::cerr << "Memory write error: Read-only address 0x" << std::hex << address << std::endl;
+        return; // Handle error
+    }
+    
+    switch (size) {
+        case 1: memory.write(address, value & 0xFF); break;
+        case 2: memory.write16(address, value & 0xFFFF); break;
+        case 4: memory.write32(address, value); break;
+        default:
+            std::cerr << "Invalid memory write size: " << size << std::endl;
+            break;
+    }
 }
