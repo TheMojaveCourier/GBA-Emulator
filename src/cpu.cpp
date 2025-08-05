@@ -20,8 +20,18 @@ uint32_t CPU::fetchOpcode(uint32_t address) {
 void CPU::step() {
     uint32_t opcode = fetchOpcode(pc); // Fetch
     std::cout << "PC: 0x" << std::hex << pc << " Opcode: 0x" << opcode << std::endl;
+    
+    uint32_t oldPC = pc;
+    pc += 4; // Increment PC by 4 first (normal case)
+    
     decode(opcode); // Decode and execute
-    pc += 4; // Increment PC by 4
+    
+    // If this was a branch instruction, the PC will have been modified by the handler
+    // Check if PC was changed by branch instruction
+    if (pc != oldPC + 4) {
+        // PC was modified by branch instruction, don't add extra increment
+        return;
+    }
 }
 
 void CPU::decode(uint32_t opcode) {
@@ -50,23 +60,18 @@ void CPU::decode(uint32_t opcode) {
         return;
     }
 
-    uint32_t category = (opcode >> 25) & 0x7;  // Major opcode category (bits 27-25)
-
-    if (category == 0b000) {
-        if ((opcode & 0x0C000000) == 0x00000000) {
-            // Data Processing
-            handleDataProcessing(opcode);
-        } else {
-            std::cout << "Unknown instruction: 0x" << std::hex << opcode << std::endl;
-        }
-    } else if (category == 0b001) {
-        // Load/Store
+    // Check major instruction categories
+    if ((opcode & 0x0C000000) == 0x00000000) {
+        // Data Processing instructions (including immediate and register forms)
+        handleDataProcessing(opcode);
+    } else if ((opcode & 0x0C000000) == 0x04000000) {
+        // Load/Store instructions
         handleLoadStore(opcode);
-    } else if (category == 0b101) {
-        // Branch
+    } else if ((opcode & 0x0E000000) == 0x0A000000) {
+        // Branch instructions
         handleBranch(opcode);
     } else {
-        std::cout << "Unhandled instruction category: 0x" << std::hex << opcode << std::endl;
+        std::cout << "Unhandled instruction: 0x" << std::hex << opcode << std::endl;
     }
 }
 
@@ -212,7 +217,7 @@ void CPU::handleLoadStore(uint32_t opcode) {
     bool byteTransfer = (opcode & (1 << 22)) != 0; // Bit 22: Byte or Word
     bool up = (opcode & (1 << 23)) != 0;         // Bit 23: Up or Down
     bool preIndex = (opcode & (1 << 24)) != 0;   // Bit 24: Pre or Post indexing
-    bool immediate = !(opcode & (1 << 25)) != 0; // Bit 25: Immediate or Register offset
+    bool immediate = !(opcode & (1 << 25)) != 0; // Bit 25: Immediate (0) or Register (1) offset
 
     uint32_t rn = (opcode >> 16) & 0xF; // Base register
     uint32_t rd = (opcode >> 12) & 0xF; // Destination/source register
@@ -282,10 +287,11 @@ void CPU::handleBranch(uint32_t opcode) {
               << std::hex << offset << ", Target Address: 0x" << std::hex << (pc + offset)
               << std::endl;
 
-    // If we were executing, we would update PC and LR (for BL)
+    // Save return address in LR for BL (PC is already incremented)
     if (link) {
-        registers[14] = pc + 4; // Save return address in LR
+        registers[14] = pc; // Save return address in LR
     }
+    
     pc += offset; // Update PC (branch to target)
 }
 
