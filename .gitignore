@@ -1,0 +1,16 @@
+# Build artifacts
+obj/
+gba_emulator
+
+# IDE files
+.vscode/
+.vs/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

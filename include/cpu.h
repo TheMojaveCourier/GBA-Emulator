@@ -14,6 +14,9 @@ public:
     void handleDataProcessing(uint32_t opcode);
     void handleLoadStore(uint32_t opcode);
     void handleBranch(uint32_t opcode);
+    void handleMultiply(uint32_t opcode);
+    void handleLoadStoreMultiple(uint32_t opcode);
+    void handleLoadStoreHalfword(uint32_t opcode);
     void updateFlags(uint32_t result, bool isAdd, uint32_t operand1, uint32_t operand2);
     
 private:
@@ -26,6 +29,10 @@ private:
     bool checkCondition(uint32_t condition);
     uint32_t readMemory(uint32_t address, int size = 4); // size: 1=byte, 2=halfword, 4=word
     void writeMemory(uint32_t address, uint32_t value, int size = 4);
+    
+    // Helper methods for instruction handling
+    uint32_t performShift(uint32_t value, uint32_t shiftType, uint32_t shiftAmount, bool& carryOut);
+    uint32_t getOperand2(uint32_t opcode, bool& carryOut);
 };
 
 #endif // CPU_H
