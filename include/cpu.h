@@ -4,6 +4,7 @@
 #include <cstdint>
 #include "memory.h"
 
+class DebugTracer;
 // Register indices (for public API and instruction decoding)
 constexpr int R0 = 0, R1 = 1, R2 = 2, R3 = 3, R4 = 4, R5 = 5, R6 = 6, R7 = 7;
 constexpr int R8 = 8, R9 = 9, R10 = 10, R11 = 11, R12 = 12;
@@ -30,6 +31,7 @@ enum CpuMode {
     MODE_MASK = 0b11111
 };
 
+
 class CPU {
 public:
     CPU(Memory& mem);
@@ -42,11 +44,23 @@ public:
     uint32_t getCPSR() const { return cpsr; }
     uint32_t thumb_bl_offset = 0;
     bool thumb_bl_pending = false;
+    void setDebugger(DebugTracer* tracer);
+    void enableLegacyDebug(bool enable) { legacyDebugEnabled = enable; }
+    bool isLegacyDebugEnabled() const { return legacyDebugEnabled; }
 
     // Inlined for efficiency
     bool isThumbMode() const { return (cpsr & T_BIT) != 0; }
 
 private:
+    // --- Debugger methods ---
+    bool debuggerTraceInstruction(uint32_t addr, uint32_t opcode, bool isThumb);
+    bool debuggerCheckBreakpoint(uint32_t addr);
+    void debuggerDumpRegisters();
+    void debuggerTraceCall(uint32_t from, uint32_t to);
+    void debuggerTraceReturn(uint32_t from, uint32_t to);
+    void debuggerTraceMemoryAccess(uint32_t addr, uint32_t value, bool isWrite, int size);
+    void debuggerDumpMemoryRange(uint32_t start, uint32_t end);
+    
     // --- Banked Core State ---
     uint32_t r[13];      // R0-R12, common to all modes
     uint32_t pc;         // R15, program counter
@@ -97,17 +111,26 @@ private:
     void handleMsr(uint32_t opcode);
     void dumpROMArea(uint32_t address, int num_bytes);
     void handleSWI(uint8_t swiNumber);
+    void handleBlockDataTransfer(uint32_t opcode);
+    void handleMultiply(uint32_t opcode);
+	void handleMultiplyLong(uint32_t opcode);
+	void handleThumbAddSubtract(uint16_t opcode);
+	void handleThumbBranchExchange(uint16_t opcode);
     
     // --- Interrupt Handling ---
     void checkAndHandleInterrupts();
     void handleUndefinedInstruction();
-    
-    
+       
 
     // --- Flag Updates ---
     void updateNZFlags(uint32_t result);
     void updateCVFlagsForAdd(uint32_t op1, uint32_t op2, uint32_t result);
     void updateCVFlagsForSub(uint32_t op1, uint32_t op2, uint32_t result);
+    
+    // --- Debug staff  ---
+    DebugTracer* debugger = nullptr;
+    bool legacyDebugEnabled = false;
+	friend class DebugTracer;
 };
 
 #endif // CPU_H

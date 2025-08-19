@@ -16,6 +16,7 @@ public:
     void update(const uint32_t* pixel_buffer);
     bool should_close() const;
     void handle_events();
+    void setDebugEnabled(bool enable) { debugEnabled = enable; }
 
 private:
     SDL_Window* window;
@@ -26,6 +27,7 @@ private:
     static const int SCREEN_WIDTH = 240;
     static const int SCREEN_HEIGHT = 160;
     static const int WINDOW_SCALE = 3;
+    bool debugEnabled = false;
 };
 
 #endif // DISPLAY_H

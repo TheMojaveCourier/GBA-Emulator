@@ -32,6 +32,7 @@ public:
     void debugLogVRAM(bool enable) { debugVRAM = enable; }
     void setIME(bool value);
     bool getIME() const;
+    void setDebugEnabled(bool enable) { debugEnabled = enable; }
     
 private:
     std::vector<uint8_t> bios;
@@ -44,6 +45,7 @@ private:
     std::vector<uint8_t> rom;
     bool debugDISPCNT = false;
     bool debugVRAM = false;
+    bool debugEnabled = false;
     bool ime = false;
     
     bool isValidWriteAddress(uint32_t address) const;
