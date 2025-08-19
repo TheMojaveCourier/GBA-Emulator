@@ -3,13 +3,12 @@
 #include "cpu.h"
 #include "ppu.h"
 #include "display.h"
+#include "debug.h"
 #include <fstream>
 #include <vector>
 #include <stdexcept>
 #include <iomanip>
 #include <SDL2/SDL.h>
-
-void forceDisplaySetup(Memory& memory);
 
 std::vector<uint8_t> loadROM(const std::string& filename) {
     std::ifstream file(filename, std::ios::binary | std::ios::ate);
@@ -26,46 +25,85 @@ std::vector<uint8_t> loadROM(const std::string& filename) {
     return rom;
 }
 
-void forceDisplaySetup(Memory& memory) {
-    std::cout << "[DEBUG] Forcing Mode 3 display setup for testing" << std::endl;
-    
-    // Force DISPCNT = MODE_3 | BG2_ON (0x0403)
-    memory.write16(REG_DISPCNT, 0x0403);
-    
-    // Fill VRAM with red pixels (RGB555: 31,0,0 = 0x001F)
-    std::cout << "[DEBUG] Filling VRAM with red pixels" << std::endl;
-    for (uint32_t i = 0; i < 240*160; i++) {
-        memory.write16(0x06000000 + (i*2), 0x001F);
-    }
-    
-    std::cout << "[DEBUG] Display setup complete" << std::endl;
-}
-
 int main(int argc, char* argv[]) {
     try {
-        std::string romPath = "roms/test_mmz.gba";
+        std::string romPath = "";
         if (argc > 1) romPath = argv[1];
         
         std::vector<uint8_t> romData = loadROM(romPath);
-        std::cout << "ROM loaded (" << romData.size() << " bytes)" << std::endl;
+        //std::cout << "ROM loaded (" << romData.size() << " bytes)" << std::endl;
 
         // Initialize components
+        bool enableLegacyDebug = false;
+        bool debuggerConsoleOutput = false;  // Default to file-only for new debugger
+        std::string debugLogFile = "debug.log";
+        
         Display display;
+        
         Memory memory;
         memory.debugLogVRAM(true);
         memory.loadRom(romData);
         memory.debugLogVRAMWrites(true);
         memory.debugLogDISPCNTWrites(true);
+        memory.setDebugEnabled(enableLegacyDebug);
         
         CPU cpu(memory);
+        cpu.enableLegacyDebug(enableLegacyDebug);
+        
         PPU ppu(memory);
+        ppu.setDebugEnabled(enableLegacyDebug);
+        
+        // Debug configuration
+        DebugTracer::TraceLevel level = DebugTracer::NONE;
+        
+        // Parse command line arguments
+        for (int i = 1; i < argc; i++) {
+		    std::string arg = argv[i];
+		    if (arg == "--legacy-debug") {
+		        enableLegacyDebug = true;
+		    } else if (arg.find("--debug=") == 0) {
+		        // Already handled for new debugger
+		    } else if (arg == "--debug-console") {
+		        debuggerConsoleOutput = true;
+		    } else if (arg.find("--log-file=") == 0) {
+		        debugLogFile = arg.substr(11);  // Extract filename after --log-file=
+		    } else if (arg[0] != '-') {
+		        // Assume it's a ROM path
+		        romPath = arg;
+		    }
+		}
+        
+        // Command line options to control debugging level
+        for (int i = 1; i < argc; i++) {
+            std::string arg = argv[i];
+            if (arg == "--debug=none") level = DebugTracer::NONE;
+            else if (arg == "--debug=minimal") level = DebugTracer::MINIMAL;
+            else if (arg == "--debug=normal") level = DebugTracer::NORMAL;
+            else if (arg == "--debug=verbose") level = DebugTracer::VERBOSE;
+            else if (arg == "--debug=full") level = DebugTracer::FULL;
+        }
+        
+        DebugTracer tracer(cpu, level);
+        tracer.setConsoleOutput(debuggerConsoleOutput);
+    	tracer.setLogFile(debugLogFile);
+        cpu.setDebugger(&tracer);
+        
+        // Set up log file
+        tracer.setLogFile("debug.log");
+        
+        // Add breakpoints for key functions/memory points
+        tracer.addBreakpoint(0x8000000);  // ROM entry point
+        tracer.addBreakpoint(0x80000c0);  // Key position observed in logs
+        tracer.addBreakpoint(0x8000ab0);  // First function call
+        
+        // If you want to see the memory state at initialization
+        if (level >= DebugTracer::NORMAL) {
+            tracer.dumpMemoryRange(0x3007fc0, 0x3007fe8);  // Stack memory region
+            tracer.dumpMemoryRange(0x4000000, 0x4000010);  // IO registers
+        }
 
         cpu.reset();
-        
-        // ADD THIS LINE - Force display setup for testing
-        forceDisplaySetup(memory);
-        
-        // Rest of your existing main loop...
+                
         while (!display.should_close()) {
             display.handle_events();
             
@@ -74,7 +112,10 @@ int main(int argc, char* argv[]) {
                 ppu.step(cycles_ran);
             }
             
-            std::cout << "[MAIN] Updating display with new frame" << std::endl;
+            if (level >= DebugTracer::MINIMAL) {
+                std::cout << "[MAIN] Updating display with new frame" << std::endl;
+            }
+            
             display.update(ppu.get_pixel_buffer());
             ppu.frame_rendered();
             

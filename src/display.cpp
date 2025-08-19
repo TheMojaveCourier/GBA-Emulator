@@ -37,7 +37,7 @@ void Display::update(const uint32_t* pixel_buffer) {
     static int frame_count = 0;
     frame_count++;
     
-    if (frame_count % 60 == 0) {
+    if (debugEnabled && frame_count % 60 == 0) {
         std::cout << "[DISPLAY] Updated frame " << frame_count << std::endl;
         
         // In debug mode, verify a few sample pixels

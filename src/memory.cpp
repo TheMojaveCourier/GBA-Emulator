@@ -414,14 +414,17 @@ void Memory::loadRom(const std::vector<uint8_t>& romData) {
     if (romData.empty()) {
         throw std::runtime_error("Attempted to load empty ROM data");
     }
+    
     rom = romData;
     
-    std::cout << "ROM loaded. Size: " << rom.size() << " bytes" << std::endl;
-    std::cout << "First 32 bytes:";
-    for (size_t i = 0; i < 32 && i < rom.size(); i++) {
-        if (i % 8 == 0) std::cout << "\n  ";
-        std::cout << "0x" << std::hex << std::setw(2) << std::setfill('0') 
-                  << (int)rom[i] << " ";
+    if (debugEnabled){
+		std::cout << "ROM loaded. Size: " << rom.size() << " bytes" << std::endl;
+		std::cout << "First 32 bytes:";
+		for (size_t i = 0; i < 32 && i < rom.size(); i++) {
+		    if (i % 8 == 0) std::cout << "\n  ";
+		    std::cout << "0x" << std::hex << std::setw(2) << std::setfill('0') 
+		              << (int)rom[i] << " ";
+		}
+		std::cout << std::dec << std::endl;
     }
-    std::cout << std::dec << std::endl;
 }
