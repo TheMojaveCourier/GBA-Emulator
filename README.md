@@ -10,40 +10,40 @@ make
 ## Run Debug Logging:      
 * Run with full logging:
 ```‎
-./gba_emulator roms/thumb.gba --debug=full
+./gba_emulator roms/test.gba --debug=full
 ```
 ‎
 * Run with minimal logging:
 ```
-./gba_emulator roms/thumb.gba --debug=minimal
+./gba_emulator roms/test.gba --debug=minimal
 ```
 * Run with no extra logging:
 
 ```
-./gba_emulator roms/thumb.gba --debug=none
+./gba_emulator roms/test.gba --debug=none
 
 ```
 * No debug outputalso :
 ```
-./gba_emulator roms/thumb.gba
+./gba_emulator roms/test.gba
 ```
 * New debugger only:
 ```
-./gba_emulator roms/thumb.gba --debug=normal
+./gba_emulator roms/test.gba --debug=normal
 ```
 * Legacy debug only:
 ```
-./gba_emulator roms/thumb.gba --legacy-debug
+./gba_emulator roms/test.gba --legacy-debug
 ```
 * Both debug systems: 
 ```
-./gba_emulator roms/thumb.gba --debug=normal --legacy-debug
+./gba_emulator roms/test.gba --debug=normal --legacy-debug
 ```
 * Debug to console as well as file: 
 ```
-./gba_emulator roms/thumb.gba --debug-console
+./gba_emulator roms/test.gba --debug-console
 ```
 * Specify a custom log file:
 ```
-./gba_emulator roms/thumb.gba --log-file=my_debug_output.log
+./gba_emulator roms/test.gba --log-file=my_debug_output.log
 ```
