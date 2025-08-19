@@ -10,6 +10,8 @@ OBJDIR = obj
 # List sources in compilation order to ensure core dependencies are built first
 SOURCES = \
     $(SRCDIR)/memory.cpp \
+    $(SRCDIR)/debug.cpp \
+    $(SRCDIR)/cpu_debug.cpp \
     $(SRCDIR)/cpu.cpp \
     $(SRCDIR)/ppu.cpp \
     $(SRCDIR)/display.cpp \
