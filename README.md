@@ -1,6 +1,6 @@
 # GBA-Emulator
 ## W.I.P. Loads ROMS to memory and can now run a basic execution loop. 
-Basic display capabilities, it now runs a basic render test regardless the rom loaded so you won't have to look at a blank void. It requires a `.gba` rom to function.
+Basic display capabilities, it now runs a basic render test regardless the rom loaded so you won't have to look at a blank void. It requires a `.gba` rom to function. SDL2 dev library is required to build.
 
 ## To compile simply use the make file
 ```
