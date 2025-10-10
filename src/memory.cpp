@@ -240,6 +240,61 @@ void Memory::write16(uint32_t address, uint16_t value) {
         return;
     }
     
+    // Special handling for timer registers
+    if (address >= 0x04000100 && address <= 0x0400010E) {
+        uint8_t timer_id = (address - 0x04000100) / 4;
+        uint32_t offset = address & 0x3FF;
+        
+        // Handle timer control register (TM0CNT_H, TM1CNT_H, etc.)
+        if ((address & 2) == 2) {  // TIMxCNT_H (control)
+            if (value & 0x80) {  // Timer enabled
+                // Store current timer value
+                uint16_t reload = timer_reload[timer_id];
+                
+                // Store the control value
+                ioRegisters[offset] = value & 0xFF;
+                ioRegisters[offset + 1] = (value >> 8) & 0xFF;
+                
+                // Reset timer with reload value
+                timer_value[timer_id] = reload;
+                timer_running[timer_id] = true;
+            } else {
+                // Timer disabled
+                timer_running[timer_id] = false;
+                ioRegisters[offset] = value & 0xFF;
+                ioRegisters[offset + 1] = (value >> 8) & 0xFF;
+            }
+        } else {  // TIMxCNT_L (reload value)
+            // Store reload value
+            timer_reload[timer_id] = value;
+            ioRegisters[offset] = value & 0xFF;
+            ioRegisters[offset + 1] = (value >> 8) & 0xFF;
+            
+            // If timer is running, immediately update the current value
+            if (timer_running[timer_id]) {
+                timer_value[timer_id] = value;
+            }
+        }
+        
+        return;
+    }
+    
+    // DMA handling
+    if (address >= 0x040000B0 && address <= 0x040000DF) {
+        int dma_id = (address - 0x040000B0) / 12;
+        int reg_offset = (address - 0x040000B0) % 12;
+        
+        ioRegisters[address & 0x3FF] = value & 0xFF;
+        ioRegisters[(address & 0x3FF) + 1] = (value >> 8) & 0xFF;
+        
+        // Check if this is writing to DMAxCNT_H (DMA control) and DMA is being enabled
+        if (reg_offset == 10 && (value & 0x8000)) {
+            executeDMA(dma_id);
+        }
+        
+        return;
+    }
+    
     // Special case for DISPCNT register
     if (address == REG_DISPCNT) {
         std::cout << "[DISPLAY] Setting DISPCNT = 0x" << std::hex << value 
@@ -398,6 +453,120 @@ void Memory::write32(uint32_t address, uint32_t value) {
     else {
         std::cerr << "[memory.cpp:" << __LINE__ << "]: Invalid write32 address: 0x" 
                   << std::hex << address << std::dec << std::endl;
+    }
+}
+
+void Memory::executeDMA(int dma_id) {
+    // Get DMA registers
+    uint32_t baseAddr = 0x040000B0 + dma_id * 12;
+    uint32_t src_addr = read32(baseAddr);
+    uint32_t dst_addr = read32(baseAddr + 4);
+    uint16_t control = read16(baseAddr + 8);
+    
+    // Extract parameters
+    int count = control & 0x3FFF;
+    if (count == 0) {
+        // Count of 0 means:
+        // DMA0, DMA1, DMA2: 0x4000 (16384) units
+        // DMA3: 0x10000 (65536) units
+        count = (dma_id == 3) ? 0x10000 : 0x4000;
+    }
+    
+    bool word_size = (control & 0x400); // 0=16-bit, 1=32-bit
+    int dest_adj = (control >> 5) & 0x3; // 00=inc, 01=dec, 10=fixed, 11=inc+reload
+    int src_adj = (control >> 7) & 0x3;  // 00=inc, 01=dec, 10=fixed, 11=prohibited
+    
+    // Adjust addresses based on internal registers if needed
+    if (dma_id == 0 && (src_addr >> 24) == 0x08) src_addr &= 0x07FFFFFF;
+    if (dma_id == 3 && (src_addr >> 24) == 0x08) src_addr &= 0x07FFFFFF;
+    
+    // Destination address masks
+    dst_addr &= 0x07FFFFFF;
+    
+    // Perform the transfer
+    for (int i = 0; i < count; i++) {
+        if (word_size) {
+            // 32-bit transfer
+            uint32_t data = read32(src_addr);
+            write32(dst_addr, data);
+            
+            // Adjust addresses
+            if (src_adj == 0) src_addr += 4;
+            else if (src_adj == 1) src_addr -= 4;
+            
+            if (dest_adj == 0) dst_addr += 4;
+            else if (dest_adj == 1) dst_addr -= 4;
+        } else {
+            // 16-bit transfer
+            uint16_t data = read16(src_addr);
+            write16(dst_addr, data);
+            
+            // Adjust addresses
+            if (src_adj == 0) src_addr += 2;
+            else if (src_adj == 1) src_addr -= 2;
+            
+            if (dest_adj == 0) dst_addr += 2;
+            else if (dest_adj == 1) dst_addr -= 2;
+        }
+    }
+    
+    // Handle repeat
+    bool repeat = (control & 0x200);
+    if (!repeat) {
+        // Turn off DMA if not repeating
+        write16(baseAddr + 10, control & ~0x8000);
+    } else if (dest_adj == 3) {
+        // Reload destination address if required
+        // The original destination is stored in DMAxD
+        uint32_t original_dst = read32(baseAddr + 4);
+        write32(baseAddr + 4, original_dst);
+    }
+    
+    // Set IRQ if enabled
+    if (control & 0x4000) {
+        uint16_t irq_flag = read16(REG_IF);
+        write16(REG_IF, irq_flag | (1 << (8 + dma_id)));
+    }
+}
+
+void Memory::tickTimers(int cycles) {
+    static const int prescalers[4] = {1, 64, 256, 1024};
+    
+    for (int i = 0; i < 4; i++) {
+        if (!timer_running[i]) continue;
+        
+        // Get control register
+        uint16_t control = read16(0x04000100 + i * 4 + 2);
+        int prescaler_idx = control & 0x3;
+        int prescaler = prescalers[prescaler_idx];
+        
+        // Increment timer
+        timer_value[i] += cycles / prescaler;
+        
+        // Check overflow
+        if (timer_value[i] >= 0x10000) {
+            // Timer overflow
+            timer_value[i] = timer_reload[i] + (timer_value[i] - 0x10000);
+            
+            // Check if IRQ is enabled
+            if (control & 0x40) {
+                // Trigger timer interrupt
+                uint16_t irq_flag = read16(REG_IF);
+                write16(REG_IF, irq_flag | (1 << (3 + i)));
+            }
+            
+            // Check if this timer cascades to the next one
+            if (i < 3 && (read16(0x04000100 + (i+1) * 4 + 2) & 0x4)) {
+                timer_value[i+1]++;
+            }
+        }
+        
+        // Update the timer register with current value
+        // Use a direct update to avoid recursive calls
+        uint32_t addr = 0x04000100 + i * 4;
+        uint32_t offset = addr & 0x3FF;
+        ioRegisters[offset] = timer_value[i] & 0xFF;
+        ioRegisters[offset + 1] = (timer_value[i] >> 8) & 0xFF;
     }
 }
 

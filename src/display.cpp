@@ -56,9 +56,27 @@ void Display::update(const uint32_t* pixel_buffer) {
 
 void Display::handle_events() {
     SDL_Event e;
+    static bool alt_pressed = false;
+    
     while (SDL_PollEvent(&e) != 0) {
         if (e.type == SDL_QUIT) {
             quit = true;
+        }
+        else if (e.type == SDL_KEYDOWN) {
+            // Track Alt key state
+            if (e.key.keysym.sym == SDLK_LALT || e.key.keysym.sym == SDLK_RALT) {
+                alt_pressed = true;
+            }
+            // Check for R key when Alt is pressed
+            else if (alt_pressed && e.key.keysym.sym == SDLK_r) {
+                debug_toggle_requested = true;
+            }
+        }
+        else if (e.type == SDL_KEYUP) {
+            // Release Alt key state
+            if (e.key.keysym.sym == SDLK_LALT || e.key.keysym.sym == SDLK_RALT) {
+                alt_pressed = false;
+            }
         }
     }
 }

@@ -107,9 +107,15 @@ int main(int argc, char* argv[]) {
         while (!display.should_close()) {
             display.handle_events();
             
+            // Check if debug toggle was requested
+            if (display.checkDebugToggle()) {
+                ppu.toggle_debug_mode();
+            }
+            
             while (!ppu.is_frame_ready()) {
                 int cycles_ran = cpu.step();
                 ppu.step(cycles_ran);
+                memory.tickTimers(cycles_ran);
             }
             
             if (level >= DebugTracer::MINIMAL) {
