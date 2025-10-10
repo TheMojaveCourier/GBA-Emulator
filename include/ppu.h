@@ -37,14 +37,15 @@ public:
     bool is_frame_ready() const;
     void frame_rendered();
     void toggle_debug_mode() { 
-    debug_enabled = !debug_enabled; 
-    std::cout << "[PPU] Debug mode " << (debug_enabled ? "enabled" : "disabled") << std::endl;
-	}
-	bool is_debug_enabled() const { return debug_enabled; }
-	void setDebugEnabled(bool enable) { debugEnabled = enable; }
+        debug_enabled = !debug_enabled; 
+        std::cout << "[PPU] Debug mode " << (debug_enabled ? "enabled" : "disabled") << std::endl;
+    }
+    bool is_debug_enabled() const { return debug_enabled; }
+    void setDebugEnabled(bool enable) { debugEnabled = enable; }
 
 private:
     void render_scanline();
+    void render_sprites_scanline(uint32_t* scanline_buffer, int line);
     void dump_registers();
     
     // Rendering functions for different modes
@@ -56,7 +57,7 @@ private:
     void render_mode5_scanline();
     
     // Background rendering functions
-    void render_text_bg(int bg_index, uint32_t* scanline_buffer);
+     void render_text_bg(int bg_index, uint32_t* scanline_buffer, uint8_t* priority_buffer);
     
     uint32_t convert_color(uint16_t gba_color);
 

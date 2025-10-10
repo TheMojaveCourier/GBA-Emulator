@@ -33,6 +33,9 @@ public:
     void setIME(bool value);
     bool getIME() const;
     void setDebugEnabled(bool enable) { debugEnabled = enable; }
+    void executeDMA(int dma_id);
+    // Timer tick method to call in main loop
+    void tickTimers(int cycles);
     
 private:
     std::vector<uint8_t> bios;
@@ -49,6 +52,21 @@ private:
     bool ime = false;
     
     bool isValidWriteAddress(uint32_t address) const;
+    
+    // Timer related fields
+    uint16_t timer_value[4] = {0};
+    uint16_t timer_reload[4] = {0};
+    bool timer_running[4] = {false};
+    
+    // Optional: DMA state tracking
+    struct DMA_State {
+        uint32_t source;
+        uint32_t destination;
+        uint16_t control;
+        bool active;
+    };
+    
+    DMA_State dma[4];
 };
 
 #endif // MEMORY_H

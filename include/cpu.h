@@ -85,6 +85,7 @@ private:
     void switchMode(CpuMode newMode);
     void branch(uint32_t targetAddress, bool link);
     bool checkCondition(uint32_t condition) const;
+    uint32_t sqrt(uint32_t value);
     
     // --- Memory Access ---
     uint8_t  readMemory8(uint32_t address);
