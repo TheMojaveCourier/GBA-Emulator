@@ -1,0 +1,1 @@
+Use the test roms from here: https://github.com/jsmolka/gba-tests
