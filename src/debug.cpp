@@ -3,13 +3,14 @@
 #include <chrono>
 #include <iomanip>
 
-DebugTracer::DebugTracer(CPU& cpu, TraceLevel level) 
-    : cpu(cpu), traceLevel(level) {
+DebugTracer::DebugTracer(CPU& cpu, Memory* mem, TraceLevel level)
+    : cpu(cpu), memory(mem), traceLevel(level), outputToConsole(false) {
 }
 
 void DebugTracer::setTraceLevel(TraceLevel level) {
     traceLevel = level;
 }
+
 
 void DebugTracer::setLogFile(const std::string& filename) {
     if (logFile.is_open()) {
@@ -37,6 +38,15 @@ std::string DebugTracer::getCurrentDateTime() const {
     std::stringstream ss;
     ss << std::put_time(std::localtime(&time), "%Y-%m-%d %H:%M:%S");
     return ss.str();
+}
+
+void DebugTracer::tracePaletteWrite(uint32_t address, uint16_t value) {
+    std::stringstream ss;
+    ss << "PALETTE WRITE: 0x" << std::hex << address << " = 0x" << value 
+       << " RGB=(" << (value & 0x1F) << "," 
+       << ((value >> 5) & 0x1F) << "," 
+       << ((value >> 10) & 0x1F) << ")";
+    log(ss.str());
 }
 
 void DebugTracer::traceInstruction(uint32_t address, uint32_t opcode, bool isThumb) {
@@ -228,6 +238,152 @@ std::string DebugTracer::getFlagString() {
     }
     
     return ss.str();
+}
+
+void DebugTracer::traceDisplayControl(uint16_t dispcnt) {
+    if (traceLevel < NORMAL) return;
+    
+    std::stringstream ss;
+    ss << "[DISPLAY] DISPCNT=0x" << std::hex << std::setw(4) << std::setfill('0') << dispcnt
+       << " Mode=" << (dispcnt & 0x7)
+       << " BG0=" << ((dispcnt & 0x0100) ? "ON" : "off")
+       << " BG1=" << ((dispcnt & 0x0200) ? "ON" : "off")
+       << " BG2=" << ((dispcnt & 0x0400) ? "ON" : "off")
+       << " BG3=" << ((dispcnt & 0x0800) ? "ON" : "off");
+    log(ss.str());
+}
+
+void DebugTracer::traceBGControl(int bg_index, uint16_t bgcnt) {
+    if (traceLevel < NORMAL) return;
+    
+    std::stringstream ss;
+    ss << "[DISPLAY] BG" << bg_index << "CNT=0x" << std::hex << std::setw(4) << std::setfill('0') << bgcnt
+       << " Priority=" << (bgcnt & 0x3)
+       << " CharBaseBlock=" << ((bgcnt >> 2) & 0x3)
+       << " ScreenBaseBlock=" << ((bgcnt >> 8) & 0x1F);
+    log(ss.str());
+}
+
+void DebugTracer::traceVRAMWrite(uint32_t address, uint16_t value) {
+    if (traceLevel < VERBOSE) return;
+    
+    // Only trace writes to key areas to avoid overwhelming logs
+    if ((address & 0xFFFF) == 0 || (address & 0xFF) == 0) {
+        std::stringstream ss;
+        ss << "[VRAM] Write to 0x" << std::hex << std::setw(8) << std::setfill('0') << address
+           << " = 0x" << std::setw(4) << value;
+        log(ss.str());
+    }
+}
+void DebugTracer::tracePPUMode4State(uint16_t dispcnt, uint32_t frameCount) {
+    if (traceLevel < NORMAL) return;
+    
+    std::stringstream ss;
+    ss << "[PPU] Mode 4 frame " << frameCount 
+       << " page " << ((dispcnt & 0x10) ? "1" : "0");
+    log(ss.str());
+}
+
+void DebugTracer::traceBitmapData(uint32_t vramAddr, uint32_t length, uint32_t frameOffset) {
+    if (traceLevel < VERBOSE) return;
+    
+    std::stringstream ss;
+    ss << "[VRAM] First " << length << " pixels of Mode 4 bitmap:";
+    log(ss.str());
+    
+    ss.str("");
+    for (int i = 0; i < length; i++) {
+        uint8_t idx = memory->read8(vramAddr + frameOffset + i);
+        ss << std::hex << (int)idx << " ";
+    }
+    log(ss.str());
+}
+
+void DebugTracer::dumpVRAMContents() {
+    if (!memory || traceLevel < VERBOSE) return;
+    
+    std::stringstream ss;
+    ss << "[VRAM] Checking for character data...";
+    log(ss.str());
+    
+    // Check first few character blocks for data
+    for (int block = 0; block < 4; block++) {
+        uint32_t baseAddr = 0x06000000 + block * 0x4000;
+        bool foundData = false;
+        
+        for (int offset = 0; offset < 0x1000 && !foundData; offset += 0x100) {
+            uint32_t addr = baseAddr + offset;
+            uint32_t data = 0;
+            for (int i = 0; i < 16; i += 2) {
+                data |= memory->read16(addr + i);
+            }
+            
+            if (data != 0) {
+                ss.str("");
+                ss << "[VRAM] Found data in CharBlock " << block << " at offset 0x" 
+                   << std::hex << offset << std::dec;
+                log(ss.str());
+                foundData = true;
+            }
+        }
+        
+        if (!foundData) {
+            ss.str("");
+            ss << "[VRAM] No data found in CharBlock " << block;
+            log(ss.str());
+        }
+    }
+}
+
+void DebugTracer::dumpPaletteContents() {
+    if (!memory || traceLevel < VERBOSE) return;
+    
+    std::stringstream ss;
+    ss << "[PALETTE] First 16 entries:";
+    log(ss.str());
+    
+    for (int i = 0; i < 16; i++) {
+        uint16_t color = memory->read16(0x05000000 + i*2);
+        if (color != 0 || i == 0) {
+            ss.str("");
+            ss << "[PALETTE] " << i << " = 0x" << std::hex << std::setw(4) 
+               << std::setfill('0') << color << std::dec 
+               << " (R:" << ((color & 0x1F)) 
+               << " G:" << ((color >> 5) & 0x1F) 
+               << " B:" << ((color >> 10) & 0x1F) << ")";
+            log(ss.str());
+        }
+    }
+}
+
+void DebugTracer::dumpTileMap(int screenBlock) {
+    if (!memory || traceLevel < VERBOSE) return;
+    
+    std::stringstream ss;
+    ss << "[TILEMAP] Screen Block " << screenBlock << " entries:";
+    log(ss.str());
+    
+    uint32_t baseAddr = 0x06000000 + screenBlock * 0x800;
+    bool foundEntries = false;
+    
+    // Just check first few rows (30 entries per row)
+    for (int i = 0; i < 60; i++) {
+        uint16_t entry = memory->read16(baseAddr + i*2);
+        if (entry != 0) {
+            ss.str("");
+            ss << "[TILEMAP] Entry " << i << " = 0x" << std::hex << entry 
+               << " (TileID: " << (entry & 0x3FF) 
+               << ", PalBank: " << ((entry >> 12) & 0xF) << ")" << std::dec;
+            log(ss.str());
+            foundEntries = true;
+        }
+    }
+    
+    if (!foundEntries) {
+        ss.str("");
+        ss << "[TILEMAP] No non-zero entries found in first 60 positions";
+        log(ss.str());
+    }
 }
 
 void DebugTracer::log(const std::string& message) {

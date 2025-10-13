@@ -1,4 +1,5 @@
 #include "ppu.h"
+#include "debug.h"
 #include <iostream>
 #include <cstring>
 #include <iomanip>
@@ -662,17 +663,30 @@ void PPU::render_mode4_scanline() {
     
     uint32_t scanline_buffer[GBA_SCREEN_WIDTH];
     
-    // Debug display of first frame VRAM values
-    if (debugEnabled && frame_count == 0 && current_scanline == 0) {
-        std::cout << "[PPU] Mode 4 VRAM first few pixels (page " << (frame_offset ? "1" : "0") << "): ";
+    // Debug display of first frame VRAM values - use debugger instead of direct console output
+    if (current_scanline == 0 && frame_count == 0 && debugger != nullptr) {
+        // First frame, first scanline - good place for initial debug info
+        std::stringstream ss;
+        ss << "Mode 4 VRAM first few pixels (page " << (frame_offset ? "1" : "0") << "): ";
+        
         for (int i = 0; i < 8; i++) {
             uint8_t index = memory.read8(VRAM_BASE + frame_offset + i);
             uint16_t color = memory.read16(PALETTE_RAM + index * 2);
-            std::cout << "idx=" << (int)index << "->0x" << std::hex << color << " ";
+            ss << "idx=" << (int)index << "->0x" << std::hex << color << " ";
         }
-        std::cout << std::dec << std::endl;
+        
+        // Use debugger's traceVRAMWrite or similar method
+        debugger->traceMemoryAccess(VRAM_BASE + frame_offset, 0, false, 8);
     }
     
+    // Enhanced debug - check beginning of every frame
+    if (current_scanline == 0 && frame_count % 60 == 0 && debugger != nullptr) {
+        debugger->tracePPUMode4State(dispcnt, frame_count);
+        debugger->dumpPaletteContents();
+        debugger->traceBitmapData(VRAM_BASE, 16, frame_offset);
+    }
+    
+    // Actual rendering code - this is unchanged
     for (int x = 0; x < GBA_SCREEN_WIDTH; x++) {
         // Read the 8-bit palette index from VRAM
         uint8_t palette_idx = memory.read8(VRAM_BASE + frame_offset + vram_offset + x);
@@ -730,4 +744,16 @@ bool PPU::is_frame_ready() const {
 
 void PPU::frame_rendered() {
     frame_ready_flag = false;
+}
+
+void PPU::triggerDiagnostics() {
+    if (debugger) {
+        debugger->dumpVRAMContents();
+        debugger->dumpPaletteContents();
+        
+        // Check multiple screen blocks where the tile map might be
+        for (int block = 16; block <= 20; block++) {
+            debugger->dumpTileMap(block);
+        }
+    }
 }
