@@ -114,9 +114,10 @@ private:
     void handleSWI(uint8_t swiNumber);
     void handleBlockDataTransfer(uint32_t opcode);
     void handleMultiply(uint32_t opcode);
-	void handleMultiplyLong(uint32_t opcode);
-	void handleThumbAddSubtract(uint16_t opcode);
-	void handleThumbBranchExchange(uint16_t opcode);
+    void handleMultiplyLong(uint32_t opcode);
+    void handleThumbAddSubtract(uint16_t opcode);
+    void handleThumbBranchExchange(uint16_t opcode);
+    void handleHalfwordDataTransfer(uint32_t opcode);
     
     // --- Interrupt Handling ---
     void checkAndHandleInterrupts();
