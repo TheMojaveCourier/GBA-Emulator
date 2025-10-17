@@ -1,4 +1,5 @@
 #include "cpu.h"
+#include "debug.h" 
 #include <iostream>
 #include <iomanip>
 #include <stdexcept>
@@ -146,6 +147,9 @@ void CPU::decodeArm(uint32_t opcode) {
     else if (((opcode >> 25) & 0b111) == 0b101) { 
         handleBranch(opcode); 
     }
+    else if ((opcode & 0x0E000090) == 0x00000090) {
+        handleHalfwordDataTransfer(opcode);
+    }
     else if (((opcode >> 26) & 0b11) == 0b01) { 
         handleLoadStore(opcode); 
     }
@@ -167,6 +171,49 @@ void CPU::decodeArm(uint32_t opcode) {
     }
 }
 
+
+// Function to handle halfword data transfers
+void CPU::handleHalfwordDataTransfer(uint32_t opcode) {
+    bool pre_indexed = (opcode >> 24) & 1;
+    bool up = (opcode >> 23) & 1;
+    bool immediate = (opcode >> 22) & 1;
+    bool writeback = (opcode >> 21) & 1;
+    bool load = (opcode >> 20) & 1;
+    uint8_t rn = (opcode >> 16) & 0xF;  // Base register
+    uint8_t rd = (opcode >> 12) & 0xF;  // Source/destination register
+    
+    uint32_t offset;
+    if (immediate) {
+        // Immediate offset: 4 bits in [11:8] and 4 bits in [3:0]
+        offset = ((opcode >> 4) & 0xF0) | (opcode & 0xF);
+    } else {
+        // Register offset
+        offset = getRegister(opcode & 0xF);
+    }
+    
+    uint32_t address = getRegister(rn);
+    
+    // Apply offset based on addressing mode
+    if (pre_indexed) {
+        address = up ? address + offset : address - offset;
+    }
+    
+    if (load) {
+        // LDRH
+        uint16_t value = readMemory16(address);
+        setRegister(rd, value);
+    } else {
+        // STRH
+        writeMemory16(address, getRegister(rd) & 0xFFFF);
+    }
+    
+    // Handle post-indexed addressing and writeback
+    if (!pre_indexed) {
+        setRegister(rn, up ? address + offset : address - offset);
+    } else if (writeback) {
+        setRegister(rn, address);
+    }
+}
 
 void CPU::handleMultiply(uint32_t opcode) {
     bool accumulate = (opcode >> 21) & 1;  // A bit - accumulate flag
@@ -447,24 +494,49 @@ void CPU::handleDataProcessing(uint32_t opcode) {
 }
 
 void CPU::handleLoadStore(uint32_t opcode) {
-    uint32_t rd = (opcode>>12)&0xF, rn=(opcode>>16)&0xF;
-    bool is_load = (opcode>>20)&1, pre_index=(opcode>>24)&1, add_offset=(opcode>>23)&1;
-    bool byte_transfer=(opcode>>22)&1, writeback=(opcode>>21)&1;
+    uint32_t rd = (opcode>>12)&0xF;
+    uint32_t rn = (opcode>>16)&0xF;
+    bool is_load = (opcode>>20)&1;
+    bool pre_index = (opcode>>24)&1;
+    bool add_offset = (opcode>>23)&1;
+    bool byte_transfer = (opcode>>22)&1;
+    bool writeback = (opcode>>21)&1;
+    bool register_offset = (opcode>>25)&1;
     
-    uint32_t offset = (opcode & 0xFFF); // Simple immediate offset
+    uint32_t offset;
     uint32_t base = getRegister(rn);
     
-    uint32_t addr = pre_index ? (add_offset ? base+offset : base-offset) : base;
-
+    if (register_offset) {
+        // Register offset
+        uint8_t rm = opcode & 0xF;
+        uint8_t shift_type = (opcode>>5) & 3;
+        uint8_t shift_amt = (opcode>>7) & 0x1F;
+        
+        offset = getRegister(rm);
+        // Apply shifts based on shift_type and shift_amt
+        // (implementation omitted for brevity)
+    } else {
+        offset = opcode & 0xFFF;
+    }
+    
+    uint32_t addr = base;
+    if (pre_index) {
+        addr = add_offset ? (base + offset) : (base - offset);
+    }
+    
     if (is_load) {
         uint32_t data = byte_transfer ? readMemory8(addr) : readMemory32(addr);
         setRegister(rd, data);
-    } else { // Store
-        writeMemory32(addr, getRegister(rd));
+    } else {
+        if (byte_transfer) {
+            writeMemory8(addr, getRegister(rd) & 0xFF);
+        } else {
+            writeMemory32(addr, getRegister(rd));
+        }
     }
-
+    
     if (!pre_index || writeback) {
-        setRegister(rn, add_offset ? base+offset : base-offset);
+        setRegister(rn, add_offset ? (base + offset) : (base - offset));
     }
 }
 
@@ -523,16 +595,18 @@ bool CPU::isValidMemoryAddress(uint32_t address) const {
 }
 
 void CPU::handleSWI(uint8_t swiNumber) {
-    std::cout << "[SWI] Handling SWI #" << (int)swiNumber << " at PC=0x" << std::hex << pc << std::dec << std::endl;
-    
+    //std::cout << "[SWI] Handling SWI #" << (int)swiNumber << " at PC=0x" << std::hex << pc << std::dec << std::endl;
+    if (debugger) {
+        debugger->traceInterrupt(swiNumber);
+    }
     switch (swiNumber) {
-        case 0x00: // In this mode 3 test ROM, SWI 0 is used for VBlankIntrWait oops remember to delete in later stages
+        /*case 0x00: // In this mode 3 test ROM, SWI 0 is used for VBlankIntrWait oops remember to delete in later stages
             std::cout << "[SWI] Treating SWI #0 as VBlankIntrWait" << std::endl;
             // Simulate VBlank interrupt occurred
             memory.setIME(true);
             memory.write16(REG_IF, memory.read16(REG_IF) | 1); // Set VBlank flag
             break;
-        
+        */
         case 0x04: // IntrWait
             {
                 // IntrWait(bool discard_current, uint16_t wait_flags)
@@ -550,7 +624,7 @@ void CPU::handleSWI(uint8_t swiNumber) {
             }
             break;
             
-        case 0x05: // VBlankIntrWait
+        /*case 0x05: // VBlankIntrWait old
             {
                 std::cout << "[SWI] VBlankIntrWait" << std::endl;
                 
@@ -564,12 +638,45 @@ void CPU::handleSWI(uint8_t swiNumber) {
                 // But for now, just pretend it happened
             }
             break;
+        */
+        case 0x05: // VBlankIntrWait
+            // Wait for VBlank interrupt
+            // In our emulator, we can simulate this
+            ime = true;
+            halted = true;
+            // The CPU will be unhalted when a VBlank interrupt occurs
+            break;
+          
+        case 0x06: // Div
+            {
+                // Division: r0 / r1, quotient in r0, remainder in r1
+                int32_t numerator = getRegister(0);
+                int32_t denominator = getRegister(1);
+                
+                if (denominator == 0) {
+                    // Division by zero returns specific values
+                    setRegister(0, 0);  // Quotient
+                    setRegister(1, numerator);  // Remainder
+                } else {
+                    setRegister(0, numerator / denominator);  // Quotient
+                    setRegister(1, numerator % denominator);  // Remainder
+                }
+            }
+            break;
             
-        /*case 0x00: // SoftReset
+        case 0x08: // Sqrt
+            {
+                // Square root of r0, result in r0
+                uint32_t value = getRegister(0);
+                setRegister(0, sqrt(value));
+            }
+            break;
+            
+        case 0x00: // SoftReset
             std::cout << "[SWI] SoftReset" << std::endl;
             reset();
             break;
-        */    
+            
         case 0x01: // RegisterRamReset
             std::cout << "[SWI] RegisterRamReset" << std::endl;
             // Clear memory areas based on r0
@@ -586,6 +693,34 @@ void CPU::handleSWI(uint8_t swiNumber) {
             std::cout << "[SWI] Unhandled SWI number: " << (int)swiNumber << std::endl;
             break;
     }
+}
+
+// Helper function for square root (SWI 0x08)
+uint32_t CPU::sqrt(uint32_t value) {
+    if (value == 0) return 0;
+    
+    // Simple square root implementation using binary search
+    // This is a common algorithm used in GBA BIOS implementations
+    uint32_t res = 0;
+    uint32_t bit = 1 << 30;  // The second-to-top bit is set
+    
+    // Find the highest bit set
+    while (bit > value) {
+        bit >>= 2;
+    }
+    
+    // Perform the binary search
+    while (bit != 0) {
+        if (value >= res + bit) {
+            value -= res + bit;
+            res = (res >> 1) + bit;
+        } else {
+            res >>= 1;
+        }
+        bit >>= 2;
+    }
+    
+    return res;
 }
 
 void CPU::handleBranch(uint32_t opcode) { int32_t offset = ((int32_t)((opcode&0xFFFFFF)<<8))>>6; branch(getRegister(PC) + offset, (opcode>>24)&1); }

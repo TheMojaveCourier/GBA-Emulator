@@ -1,4 +1,5 @@
 #include "ppu.h"
+#include "debug.h"
 #include <iostream>
 #include <cstring>
 #include <iomanip>
@@ -7,13 +8,13 @@ PPU::PPU(Memory& mem) : memory(mem), cycle_count(0), current_scanline(0), frame_
     // Initialize pixel buffer (240x160 RGBA)
     pixel_buffer.resize(GBA_SCREEN_WIDTH * GBA_SCREEN_HEIGHT, 0);
     
-    // Set debug flags - true for development, false for production
-    debug_enabled = true;
+    // Set debug flags to false by default
+    debug_enabled = false;
     frame_count = 0;
     
-	if (debugEnabled) {
-		std::cout << "[PPU] Initialized with debug mode enabled" << std::endl;
-	}
+    if (debugEnabled) {
+        std::cout << "[PPU] Initialized with debug mode disabled" << std::endl;
+    }
 }
 
 void PPU::step(int cycles) {
@@ -135,40 +136,93 @@ void PPU::render_scanline() {
         scanline_buffer[i] = backdrop_rgba;
     }
     
-    if (debugEnabled && current_scanline == 0) {
+    if (debugEnabled && current_scanline == 0 && frame_count % 60 == 0) {
         std::cout << "[PPU] Rendering in mode " << (int)mode 
                   << ", backdrop color = 0x" << std::hex << backdrop_color << std::dec << std::endl;
     }
     
-    // Dispatch to appropriate mode renderer
-    switch (mode) {
-        case 0:
-            // Text mode (4 backgrounds)
-            render_mode0_scanline(scanline_buffer, dispcnt);
-            break;
-        case 1:
-            // Mixed mode (2 text, 1 affine background)
-            render_mode1_scanline();
-            break;
-        case 2:
-            // Affine mode (2 affine backgrounds)
-            render_mode2_scanline();
-            break;
-        case 3:
-            // Direct color bitmap mode (1 16-bit bitmap)
-            render_mode3_scanline();
-            break;
-        case 4:
-            // Indexed bitmap mode (1 8-bit bitmap)
-            render_mode4_scanline();
-            break;
-        case 5:
-            // Smaller bitmap mode (1 16-bit bitmap, smaller)
-            render_mode5_scanline();
-            break;
-        default:
-            std::cerr << "[PPU] Unsupported video mode: " << (int)mode << std::endl;
-            break;
+    // Only use debug patterns if debug mode is enabled
+    if (debug_enabled) {
+        // Create a debug pattern based on frame count
+        uint8_t pattern_type = (frame_count / 30) % 3;
+        
+        // Different debug patterns
+        switch (pattern_type) {
+            case 0: // RGB gradient
+                for (int x = 0; x < GBA_SCREEN_WIDTH; x++) {
+                    uint8_t r = x / 8 * 16;  // Horizontal gradient
+                    uint8_t g = current_scanline / 8 * 16;  // Vertical gradient
+                    uint8_t b = (x + current_scanline) / 16 * 16;  // Diagonal gradient
+                    
+                    scanline_buffer[x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                }
+                break;
+                
+            case 1: // Checkerboard
+                for (int x = 0; x < GBA_SCREEN_WIDTH; x++) {
+                    bool isWhite = ((x / 16) + (current_scanline / 16)) % 2 == 0;
+                    scanline_buffer[x] = isWhite ? 0xFFFFFFFF : 0xFF000000;
+                }
+                break;
+                
+            case 2: // Rainbow
+                for (int x = 0; x < GBA_SCREEN_WIDTH; x++) {
+                    int hue = (x + current_scanline + frame_count) % 360;
+                    float h = hue / 60.0f;
+                    float s = 1.0f;
+                    float v = 1.0f;
+                    
+                    // Simple HSV to RGB conversion
+                    int i = (int)h;
+                    float f = h - i;
+                    float p = v * (1.0f - s);
+                    float q = v * (1.0f - s * f);
+                    float t = v * (1.0f - s * (1.0f - f));
+                    
+                    uint8_t r, g, b;
+                    switch (i) {
+                        case 0: r = v * 255; g = t * 255; b = p * 255; break;
+                        case 1: r = q * 255; g = v * 255; b = p * 255; break;
+                        case 2: r = p * 255; g = v * 255; b = t * 255; break;
+                        case 3: r = p * 255; g = q * 255; b = v * 255; break;
+                        case 4: r = t * 255; g = p * 255; b = v * 255; break;
+                        default: r = v * 255; g = p * 255; b = q * 255; break;
+                    }
+                    
+                    scanline_buffer[x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                }
+                break;
+        }
+    } else {
+        // Actual ROM graphics rendering based on video mode
+        switch (mode) {
+            case 0:
+                render_mode0_scanline(scanline_buffer, dispcnt);
+                break;
+            case 1:
+                render_mode1_scanline();
+                break;
+            case 2:
+                render_mode2_scanline();
+                break;
+            case 3:
+                render_mode3_scanline();
+                break;
+            case 4:
+                render_mode4_scanline();
+                break;
+            case 5:
+                render_mode5_scanline();
+                break;
+            default:
+                std::cerr << "[PPU] Unsupported video mode: " << (int)mode << std::endl;
+                break;
+        }
+        
+        // After rendering backgrounds, render sprites if enabled
+        if (dispcnt & 0x1000) { // OBJ (sprites) enabled
+            render_sprites_scanline(scanline_buffer, current_scanline);
+        }
     }
     
     // Copy the scanline buffer to the pixel buffer
@@ -179,6 +233,179 @@ void PPU::render_scanline() {
     );
 }
 
+void PPU::render_sprites_scanline(uint32_t* scanline_buffer, int line) {
+    // OAM (Object Attribute Memory) contains sprite data
+    // Each sprite takes 8 bytes in OAM
+    // There are 128 sprites in total (0x400 bytes of OAM)
+    
+    uint16_t dispcnt = memory.read16(REG_DISPCNT);
+    bool one_dimensional_mapping = (dispcnt & 0x0200) != 0;
+    
+    // Start from the last sprite (lowest priority) and work upward
+    for (int sprite = 127; sprite >= 0; sprite--) {
+        uint32_t oam_addr = 0x07000000 + (sprite * 8);
+        
+        // Read sprite attributes
+        uint16_t attr0 = memory.read16(oam_addr);
+        uint16_t attr1 = memory.read16(oam_addr + 2);
+        uint16_t attr2 = memory.read16(oam_addr + 4);
+        
+        // Check if sprite is disabled
+        if (((attr0 >> 8) & 0x3) == 0x2) {
+            continue; // Sprite is disabled
+        }
+        
+        // Extract sprite information
+        int y = attr0 & 0xFF;
+        if (y > 160) y -= 256; // Handle wrap-around
+        
+        bool affine = (attr0 & 0x0100) != 0;
+        bool double_size = affine && (attr0 & 0x0200);
+        bool mosaic = (attr0 & 0x1000) != 0;
+        bool palette_mode = (attr0 & 0x2000) != 0; // 0=16/16, 1=256/1
+        
+        int x = attr1 & 0x1FF;
+        if (x > 240) x -= 512; // Handle wrap-around
+        
+        bool h_flip = !affine && (attr1 & 0x1000);
+        bool v_flip = !affine && (attr1 & 0x2000);
+        
+        int size_key = ((attr0 >> 14) & 0x3);
+        int shape_key = ((attr1 >> 14) & 0x3);
+        
+        // Determine sprite dimensions based on shape and size
+        int width, height;
+        
+        // Shape: 0=Square, 1=Horizontal, 2=Vertical, 3=Prohibited
+        switch (shape_key) {
+            case 0: // Square
+                switch (size_key) {
+                    case 0: width = 8; height = 8; break;
+                    case 1: width = 16; height = 16; break;
+                    case 2: width = 32; height = 32; break;
+                    case 3: width = 64; height = 64; break;
+                    default: width = 8; height = 8; break;
+                }
+                break;
+            case 1: // Horizontal
+                switch (size_key) {
+                    case 0: width = 16; height = 8; break;
+                    case 1: width = 32; height = 8; break;
+                    case 2: width = 32; height = 16; break;
+                    case 3: width = 64; height = 32; break;
+                    default: width = 8; height = 8; break;
+                }
+                break;
+            case 2: // Vertical
+                switch (size_key) {
+                    case 0: width = 8; height = 16; break;
+                    case 1: width = 8; height = 32; break;
+                    case 2: width = 16; height = 32; break;
+                    case 3: width = 32; height = 64; break;
+                    default: width = 8; height = 8; break;
+                }
+                break;
+            default:
+                continue; // Invalid shape, skip this sprite
+        }
+        
+        // Apply double size if needed (for affine sprites)
+        if (double_size) {
+            width *= 2;
+            height *= 2;
+        }
+        
+        // Check if this scanline intersects with the sprite
+        if (line < y || line >= y + height) {
+            continue; // Scanline doesn't intersect the sprite
+        }
+        
+        // Calculate which line of the sprite we're drawing
+        int sprite_line = line - y;
+        if (v_flip) sprite_line = height - 1 - sprite_line;
+        
+        // Extract other attributes
+        int tile_num = attr2 & 0x3FF;
+        int priority = (attr2 >> 10) & 0x3;
+        int palette_bank = (attr2 >> 12) & 0xF; // Only used for 16-color sprites
+        
+        // Now render the sprite line
+        for (int sx = 0; sx < width; sx++) {
+            int screen_x = x + sx;
+            
+            // Skip if off-screen
+            if (screen_x < 0 || screen_x >= GBA_SCREEN_WIDTH) {
+                continue;
+            }
+            
+            // Calculate which pixel of the sprite to draw
+            int sprite_x = sx;
+            if (h_flip) sprite_x = width - 1 - sx;
+            
+            // Calculate tile and pixel coordinates
+            int tile_x = sprite_x / 8;
+            int tile_y = sprite_line / 8;
+            int pixel_x = sprite_x % 8;
+            int pixel_y = sprite_line % 8;
+            
+            // Calculate which tile to use
+            int tile_id;
+            if (one_dimensional_mapping) {
+                // 1D mapping - tiles are arranged in a single row
+                tile_id = tile_num + tile_y * (width / 8) + tile_x;
+            } else {
+                // 2D mapping - tiles are arranged in a 2D grid (32 tiles wide)
+                tile_id = tile_num + tile_y * 32 + tile_x;
+            }
+            
+            // Calculate the tile data address
+            uint32_t tile_addr;
+            uint8_t color_idx;
+            
+            if (palette_mode) {
+                // 256-color / 1 palette mode (8 bits per pixel)
+                tile_addr = 0x06010000 + (tile_id * 64) + (pixel_y * 8) + pixel_x;
+                color_idx = memory.read8(tile_addr);
+            } else {
+                // 16-color / 16 palette mode (4 bits per pixel)
+                tile_addr = 0x06010000 + (tile_id * 32) + (pixel_y * 4) + (pixel_x / 2);
+                uint8_t byte = memory.read8(tile_addr);
+                
+                // Extract the correct 4 bits
+                if (pixel_x & 1) {
+                    color_idx = byte >> 4;
+                } else {
+                    color_idx = byte & 0xF;
+                }
+                
+                // If not transparent, apply palette bank
+                if (color_idx != 0) {
+                    color_idx += palette_bank * 16;
+                }
+            }
+            
+            // Skip transparent pixels
+            if (color_idx == 0) {
+                continue;
+            }
+            
+            // Get the color from the palette
+            uint16_t color;
+            if (palette_mode) {
+                // 256-color sprites use the second half of palette memory
+                color = memory.read16(PALETTE_RAM + 0x200 + color_idx * 2);
+            } else {
+                // 16-color sprites also use the second half of palette memory
+                color = memory.read16(PALETTE_RAM + 0x200 + color_idx * 2);
+            }
+            
+            // Draw the pixel (for now, ignore priority and alpha blending)
+            // In a more complete implementation, you'd check layer priorities
+            scanline_buffer[screen_x] = convert_color(color);
+        }
+    }
+}
+
 // Implement a simple version of Mode 0 rendering
 void PPU::render_mode0_scanline(uint32_t* scanline_buffer, uint16_t dispcnt) {
     // Check which backgrounds are enabled
@@ -186,6 +413,11 @@ void PPU::render_mode0_scanline(uint32_t* scanline_buffer, uint16_t dispcnt) {
     bool bg1_enabled = (dispcnt & 0x0200) != 0;
     bool bg2_enabled = (dispcnt & 0x0400) != 0;
     bool bg3_enabled = (dispcnt & 0x0800) != 0;
+    // Render backgrounds in priority order (3->2->1->0)
+    // This ensures lower priority BGs appear behind higher priority ones
+    
+    // Create a priority buffer to track what's been drawn
+    uint8_t priority_buffer[GBA_SCREEN_WIDTH] = {4}; // 4 = nothing drawn yet (0-3 are valid priorities)
     
     // For debugging - in the first frame, output what BGs are enabled
     if (debugEnabled && current_scanline == 0 && frame_count == 0) {
@@ -252,31 +484,19 @@ void PPU::render_mode0_scanline(uint32_t* scanline_buffer, uint16_t dispcnt) {
         return;
     }
     
-    // Normal Mode 0 rendering when not in debug mode
-    // Proceed with normal BG rendering if debug pattern is disabled
-    if (bg0_enabled) {
-        render_text_bg(0, scanline_buffer);
-    }
-    
-    if (bg1_enabled) {
-        render_text_bg(1, scanline_buffer);
-    }
-    
-    if (bg2_enabled) {
-        render_text_bg(2, scanline_buffer);
-    }
-    
-    if (bg3_enabled) {
-        render_text_bg(3, scanline_buffer);
-    }
+    // Draw backgrounds in reverse order (lowest priority first)
+    if (bg3_enabled) render_text_bg(3, scanline_buffer, priority_buffer);
+    if (bg2_enabled) render_text_bg(2, scanline_buffer, priority_buffer);
+    if (bg1_enabled) render_text_bg(1, scanline_buffer, priority_buffer);
+    if (bg0_enabled) render_text_bg(0, scanline_buffer, priority_buffer);
 }
 
-void PPU::render_text_bg(int bg_index, uint32_t* scanline_buffer) {
+void PPU::render_text_bg(int bg_index, uint32_t* scanline_buffer, uint8_t* priority_buffer) {
     // Read BG control register for this background
     uint16_t bg_cnt = memory.read16(REG_BG0CNT + bg_index * 2);
     
     // Extract BG parameters
-    uint8_t priority = (bg_cnt >> 2) & 0x3;
+    uint8_t priority = bg_cnt & 0x3;  // Priority (0-3, lower = higher priority)
     uint8_t char_base_block = (bg_cnt >> 2) & 0x3;
     uint8_t mosaic = (bg_cnt >> 6) & 0x1;
     uint8_t colors = (bg_cnt >> 7) & 0x1; // 0=16/16, 1=256/1
@@ -304,16 +524,6 @@ void PPU::render_text_bg(int bg_index, uint32_t* scanline_buffer) {
     int y = (current_scanline + v_offset) & 0x1FF;
     int tile_y = y & 7;
     int map_y = y >> 3;
-    
-    // Log some details for debugging
-    if (current_scanline == 0 && frame_count == 0) {
-        std::cout << "[BG" << bg_index << "] Priority: " << (int)priority
-                  << ", Char Base: " << (int)char_base_block
-                  << ", Screen Base: " << (int)screen_base_block
-                  << ", " << (colors ? "256/1" : "16/16") << " colors"
-                  << ", Scroll: (" << h_offset << "," << v_offset << ")"
-                  << std::endl;
-    }
     
     // For each pixel in the scanline
     for (int x = 0; x < GBA_SCREEN_WIDTH; x++) {
@@ -352,7 +562,7 @@ void PPU::render_text_bg(int bg_index, uint32_t* scanline_buffer) {
             tile_addr = char_base_addr + tile_id * 64 + final_tile_y * 8 + final_tile_x;
             color_index = memory.read8(tile_addr);
         } else {  // 16 colors / 16 palettes
-            tile_addr = char_base_addr + tile_id * 32 + final_tile_y * 4 + (final_tile_x >> 1);
+            tile_addr = char_base_addr + tile_id * 32 + final_tile_y * 4 + (final_tile_x / 2);
             uint8_t tile_data = memory.read8(tile_addr);
             
             // Extract the correct 4 bits
@@ -368,11 +578,12 @@ void PPU::render_text_bg(int bg_index, uint32_t* scanline_buffer) {
             }
         }
         
-        // Only draw if the color isn't transparent (0)
-        if (color_index != 0) {
+        // Only draw if the color isn't transparent (0) and this BG has higher priority
+        if (color_index != 0 && priority <= priority_buffer[x]) {
             // Get the color from the palette
             uint16_t color16 = memory.read16(PALETTE_RAM + color_index * 2);
             scanline_buffer[x] = convert_color(color16);
+            priority_buffer[x] = priority;  // Update priority buffer
         }
     }
 }
@@ -407,16 +618,33 @@ void PPU::render_mode2_scanline() {
 }
 
 void PPU::render_mode3_scanline() {
+    // In Mode 3, VRAM is treated as a 240x160 16-bit color framebuffer
+    // Each pixel is a 16-bit direct color value (RGB555)
+    
+    // Calculate offset into VRAM for the current scanline
+    uint32_t vram_offset = current_scanline * GBA_SCREEN_WIDTH * 2; // 2 bytes per pixel
+    
     uint32_t scanline_buffer[GBA_SCREEN_WIDTH];
     
-    // In Mode 3, each pixel is a 16-bit color directly in VRAM
-    uint32_t vram_offset = current_scanline * GBA_SCREEN_WIDTH * 2;
+    // Debug display of first frame VRAM values
+    if (debugEnabled && frame_count == 0 && current_scanline == 0) {
+        std::cout << "[PPU] Mode 3 VRAM first few pixels: ";
+        for (int i = 0; i < 8; i++) {
+            uint16_t color = memory.read16(VRAM_BASE + i * 2);
+            std::cout << "0x" << std::hex << color << " ";
+        }
+        std::cout << std::dec << std::endl;
+    }
     
     for (int x = 0; x < GBA_SCREEN_WIDTH; x++) {
+        // Read the 16-bit color directly from VRAM
         uint16_t color16 = memory.read16(VRAM_BASE + vram_offset + x * 2);
+        
+        // Convert GBA RGB555 to RGBA8888 for display
         scanline_buffer[x] = convert_color(color16);
     }
     
+    // Copy to pixel buffer - handled by render_scanline
     memcpy(
         pixel_buffer.data() + (current_scanline * GBA_SCREEN_WIDTH),
         scanline_buffer,
@@ -425,12 +653,52 @@ void PPU::render_mode3_scanline() {
 }
 
 void PPU::render_mode4_scanline() {
-    // Fill with a yellow color for testing
+    uint16_t dispcnt = memory.read16(REG_DISPCNT);
+    
+    // Determine which page/framebuffer to use (bit 4 of DISPCNT)
+    uint32_t frame_offset = (dispcnt & 0x10) ? 0xA000 : 0;
+    
+    // Calculate offset into VRAM for the current scanline
+    uint32_t vram_offset = current_scanline * GBA_SCREEN_WIDTH;
+    
     uint32_t scanline_buffer[GBA_SCREEN_WIDTH];
-    for (int i = 0; i < GBA_SCREEN_WIDTH; i++) {
-        scanline_buffer[i] = 0xFFFFFF00; // Yellow color (RGBA)
+    
+    // Debug display of first frame VRAM values - use debugger instead of direct console output
+    if (current_scanline == 0 && frame_count == 0 && debugger != nullptr) {
+        // First frame, first scanline - good place for initial debug info
+        std::stringstream ss;
+        ss << "Mode 4 VRAM first few pixels (page " << (frame_offset ? "1" : "0") << "): ";
+        
+        for (int i = 0; i < 8; i++) {
+            uint8_t index = memory.read8(VRAM_BASE + frame_offset + i);
+            uint16_t color = memory.read16(PALETTE_RAM + index * 2);
+            ss << "idx=" << (int)index << "->0x" << std::hex << color << " ";
+        }
+        
+        // Use debugger's traceVRAMWrite or similar method
+        debugger->traceMemoryAccess(VRAM_BASE + frame_offset, 0, false, 8);
     }
     
+    // Enhanced debug - check beginning of every frame
+    if (current_scanline == 0 && frame_count % 60 == 0 && debugger != nullptr) {
+        debugger->tracePPUMode4State(dispcnt, frame_count);
+        debugger->dumpPaletteContents();
+        debugger->traceBitmapData(VRAM_BASE, 16, frame_offset);
+    }
+    
+    // Actual rendering code - this is unchanged
+    for (int x = 0; x < GBA_SCREEN_WIDTH; x++) {
+        // Read the 8-bit palette index from VRAM
+        uint8_t palette_idx = memory.read8(VRAM_BASE + frame_offset + vram_offset + x);
+        
+        // Read the corresponding color from palette RAM
+        uint16_t color16 = memory.read16(PALETTE_RAM + palette_idx * 2);
+        
+        // Convert to RGBA8888
+        scanline_buffer[x] = convert_color(color16);
+    }
+    
+    // Copy to pixel buffer - handled by render_scanline
     memcpy(
         pixel_buffer.data() + (current_scanline * GBA_SCREEN_WIDTH),
         scanline_buffer,
@@ -476,4 +744,16 @@ bool PPU::is_frame_ready() const {
 
 void PPU::frame_rendered() {
     frame_ready_flag = false;
+}
+
+void PPU::triggerDiagnostics() {
+    if (debugger) {
+        debugger->dumpVRAMContents();
+        debugger->dumpPaletteContents();
+        
+        // Check multiple screen blocks where the tile map might be
+        for (int block = 16; block <= 20; block++) {
+            debugger->dumpTileMap(block);
+        }
+    }
 }

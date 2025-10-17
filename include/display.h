@@ -17,12 +17,18 @@ public:
     bool should_close() const;
     void handle_events();
     void setDebugEnabled(bool enable) { debugEnabled = enable; }
+    bool checkDebugToggle() {
+        bool result = debug_toggle_requested;
+        debug_toggle_requested = false;
+        return result;
+    }
 
 private:
     SDL_Window* window;
     SDL_Renderer* renderer;
     SDL_Texture* texture;
     bool quit;
+    bool debug_toggle_requested = false;
 
     static const int SCREEN_WIDTH = 240;
     static const int SCREEN_HEIGHT = 160;

@@ -85,6 +85,7 @@ private:
     void switchMode(CpuMode newMode);
     void branch(uint32_t targetAddress, bool link);
     bool checkCondition(uint32_t condition) const;
+    uint32_t sqrt(uint32_t value);
     
     // --- Memory Access ---
     uint8_t  readMemory8(uint32_t address);
@@ -113,9 +114,10 @@ private:
     void handleSWI(uint8_t swiNumber);
     void handleBlockDataTransfer(uint32_t opcode);
     void handleMultiply(uint32_t opcode);
-	void handleMultiplyLong(uint32_t opcode);
-	void handleThumbAddSubtract(uint16_t opcode);
-	void handleThumbBranchExchange(uint16_t opcode);
+    void handleMultiplyLong(uint32_t opcode);
+    void handleThumbAddSubtract(uint16_t opcode);
+    void handleThumbBranchExchange(uint16_t opcode);
+    void handleHalfwordDataTransfer(uint32_t opcode);
     
     // --- Interrupt Handling ---
     void checkAndHandleInterrupts();
